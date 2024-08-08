@@ -19,6 +19,7 @@ from bokeh.models.widgets import DataTable, TableColumn, Div
 from bokeh.plotting import *
 from bokeh.transform import factor_cmap
 from bokeh.resources import INLINE
+from bokeh.models import HoverTool
 
 parser = argparse.ArgumentParser(description="Visualize CNV data from short read sequencing data.")
 
@@ -160,6 +161,8 @@ def draw_chr_boundary(figure, chr_boundary, genome, vaf):
         chr_boundary = chr_boundary.sort_values(by="genome_cumsum")
         # for loop to draw subsequent chromosome boundary lines
         for index, row in chr_boundary.iterrows():
+            if np.isnan(row['genome_cumsum']):
+                row['genome_cumsum'] = float("3095677412")
             temp_text_loc = round(temp_loc + (row['genome_cumsum'] - temp_loc) / 2)
             if (vaf == True):
                 text = Label(x=temp_text_loc, y=0.1,
@@ -190,7 +193,7 @@ def draw_chr_boundary(figure, chr_boundary, genome, vaf):
 
 
 # read ratio file for plotting log2(FC) points
-data = pd.read_csv(options.ratio_file, sep=config['files']['ratio_file']['field_separator'])
+data = pd.read_csv(options.ratio_file, sep=config['files']['ratio_file']['field_separator'], low_memory=False)
 logging.info("Successfully read the ratio file.")
 
 # make sure chromosome names are string data type
@@ -232,7 +235,7 @@ if data.label[0] == "Antitarget" and np.isnan(data[config['files']['ratio_file']
     data.loc[0, config['files']['ratio_file']['column_names']['log2FC']] = 0
     #print("Changing first log2FC value manually to 0! -> related to Bokeh not able to serialize beginning with NaN")
 
-chr_cumsum = pd.read_csv(options.genome_file, sep=config['files']['genome_file']['field_separator'])
+chr_cumsum = pd.read_csv(options.genome_file, sep=config['files']['genome_file']['field_separator'], low_memory=False)
 logging.info("Successfully read the genome file.")
 
 # make sure chromosome names are string data type
@@ -262,7 +265,7 @@ if (options.seg_blacklist):
     seg_blacklist['index'] = range(len(seg_blacklist))
 
 if (options.seg_file):
-    seg = pd.read_csv(options.seg_file, sep=config['files']['segmentation_file']['field_separator'])
+    seg = pd.read_csv(options.seg_file, sep=config['files']['segmentation_file']['field_separator'], low_memory=False)
     logging.info("Successfully read the genome file.")
 
     if (options.recenter):
@@ -298,7 +301,7 @@ if (options.seg_file):
     seg['index'] = range(len(seg))
 
 if (options.gene_file):
-    gen = pd.read_csv(options.gene_file, sep=config['files']['gene_file']['field_separator'])
+    gen = pd.read_csv(options.gene_file, sep=config['files']['gene_file']['field_separator'], low_memory=False)
     logging.info("Successfully read the gene CNV file.")
 
     if (options.recenter):
@@ -373,25 +376,25 @@ if (options.vcf_file):
                 len(record.REF) == 1 and \
                 len(record.ALT) == 1 and \
                 len(record.ALT[0]) == 1 and \
-                ((record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0] +
-                  record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0]) / record.INFO[
+                ((int(record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0]) +
+                  int(record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0])) / record.INFO[
                      config['files']['vcf_file']['info_fields']['depth']] >= config['files']['vcf_file']['thresholds'][
                      'low_vaf_filter'] and
-                 (record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0] +
-                  record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0]) / record.INFO[
+                 (int(record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0]) +
+                  int(record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0])) / record.INFO[
                      config['files']['vcf_file']['info_fields']['depth']] <= config['files']['vcf_file']['thresholds'][
                      'high_vaf_filter']) and \
-                record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0] >= \
+                int(record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0]) >= \
                 config['files']['vcf_file']['thresholds']['forward_alt_reads'] and \
-                record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0] >= \
+                int(record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0]) >= \
                 config['files']['vcf_file']['thresholds']['reverse_alt_reads']:
             df_vaf.append({'chromosome': record.CHROM,
                            'start': record.POS,
                            'ref': record.REF,
                            'alt': record.ALT[0],
                            'DP': record.INFO[config['files']['vcf_file']['info_fields']['depth']],
-                           'AF': (record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0] +
-                                  record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0]) /
+                           'AF': (int(record.INFO[config['files']['vcf_file']['info_fields']['forward_alt_reads']][0]) +
+                                  int(record.INFO[config['files']['vcf_file']['info_fields']['reverse_alt_reads']][0])) /
                                  record.INFO[config['files']['vcf_file']['info_fields']['depth']]})
     df_vaf = pd.DataFrame(df_vaf)
     logging.info("Successfully filtered VCF file.")
@@ -476,8 +479,13 @@ source = ColumnDataSource(data=dict(
     gene=data[config['files']['ratio_file']['column_names']['gene']],
     ind=data.ind,
     label=data.label,
-    weight=data[config['files']['ratio_file']['column_names']['weight']] * config['files']['ratio_file'][
-        'weight_scaling_factor']))
+    depth= data[config['files']['ratio_file']['column_names']['depth']],
+    weight=round(data[config['files']['ratio_file']['column_names']['weight']]/
+                   data[config['files']['ratio_file']['column_names']['probes']],2),
+    probes=data[config['files']['ratio_file']['column_names']['probes']],
+    weight_scaled=(data[config['files']['ratio_file']['column_names']['weight']]/
+                   data[config['files']['ratio_file']['column_names']['probes']]) * 
+                    config['files']['ratio_file']['weight_scaling_factor'] + 2))
 
 source_copy = ColumnDataSource(data=dict(
     chrom=data[config['files']['ratio_file']['column_names']['chromosome']],
@@ -488,15 +496,21 @@ source_copy = ColumnDataSource(data=dict(
     gene=data[config['files']['ratio_file']['column_names']['gene']],
     ind=data.ind,
     label=data.label,
-    weight=data[config['files']['ratio_file']['column_names']['weight']] * config['files']['ratio_file'][
-        'weight_scaling_factor']))
+    depth= round(data[config['files']['ratio_file']['column_names']['depth']],2),
+    # weight=data[config['files']['ratio_file']['column_names']['weight']],
+    weight=round(data[config['files']['ratio_file']['column_names']['weight']]/
+                   data[config['files']['ratio_file']['column_names']['probes']],2),
+    probes=data[config['files']['ratio_file']['column_names']['probes']],
+    weight_scaled=(data[config['files']['ratio_file']['column_names']['weight']]/
+                   data[config['files']['ratio_file']['column_names']['probes']]) * 
+                   config['files']['ratio_file']['weight_scaling_factor'] + 2))
 
 # if both integer copy number and clonality information is present
 if (options.seg_file and
         ((config['files']['segmentation_file']['column_names']['major_cn'] in seg.columns and
         config['files']['segmentation_file']['column_names']['minor_cn'] in seg.columns) and
         config['files']['segmentation_file']['column_names']['cell_frac'] in seg.columns)):
-    source_seg = ColumnDataSource(data=dict(
+        source_seg = ColumnDataSource(data=dict(
         chrom=seg[config['files']['segmentation_file']['column_names']['chromosome']],
         start=seg[config['files']['segmentation_file']['column_names']['start']],
         end=seg[config['files']['segmentation_file']['column_names']['end']],
@@ -507,6 +521,7 @@ if (options.seg_file and
         genome_cumsum_end=seg.genome_cumsum_end,
         major_cn=seg[config['files']['segmentation_file']['column_names']['major_cn']],
         minor_cn=seg[config['files']['segmentation_file']['column_names']['minor_cn']],
+        cn=seg[config['files']['segmentation_file']['column_names']['cn']],
         cell_frac=seg[config['files']['segmentation_file']['column_names']['cell_frac']],
         gene=seg[config['files']['segmentation_file']['column_names']['gene']]))
 # if only integer copy number information is present
@@ -524,6 +539,7 @@ elif (options.seg_file and
         genome_cumsum_end=seg.genome_cumsum_end,
         major_cn=seg[config['files']['segmentation_file']['column_names']['major_cn']],
         minor_cn=seg[config['files']['segmentation_file']['column_names']['minor_cn']],
+        cn=seg[config['files']['segmentation_file']['column_names']['cn']],
         gene=seg[config['files']['segmentation_file']['column_names']['gene']]))
 # if only clonality information is present
 elif (options.seg_file and
@@ -533,6 +549,7 @@ elif (options.seg_file and
         start=seg[config['files']['segmentation_file']['column_names']['start']],
         end=seg[config['files']['segmentation_file']['column_names']['end']],
         logFC=seg[config['files']['segmentation_file']['column_names']['log2FC']],
+        cn=seg[config['files']['segmentation_file']['column_names']['cn']],
         prob_start=seg.prob_start,
         prob_end=seg.prob_end,
         genome_cumsum_start=seg.genome_cumsum_start,
@@ -545,6 +562,7 @@ elif (options.seg_file):
         start=seg[config['files']['segmentation_file']['column_names']['start']],
         end=seg[config['files']['segmentation_file']['column_names']['end']],
         logFC=seg[config['files']['segmentation_file']['column_names']['log2FC']],
+        cn=seg[config['files']['segmentation_file']['column_names']['cn']],
         prob_start=seg.prob_start,
         prob_end=seg.prob_end,
         genome_cumsum_start=seg.genome_cumsum_start,
@@ -558,6 +576,7 @@ if (options.gene_file):
         start=gen[config['files']['gene_file']['column_names']['start']],
         end=gen[config['files']['gene_file']['column_names']['end']],
         logFC=gen[config['files']['gene_file']['column_names']['log2FC']],
+        cn=gen[config['files']['gene_file']['column_names']['cn']],
         prob_start=gen.prob_start,
         prob_end=gen.prob_end,
         genome_cumsum_start=gen.genome_cumsum_start,
@@ -632,31 +651,30 @@ TOOLTIPS_GENE_TRACK = [
 ]
 
 TOOLTIPS_INT_CN = [
-    #("Index", "$index"),
-    ("Cell Fraction", "@cell_frac{0.00}"),
-    # ("Start - End", "@start - @end"),
-    # ("Gene", "@gene"),
-    # ("TxID | ExonNum", "@txid | @exonNum")
-    #("Start", "@start"),
-    #("End", "@end"),
-    #("ExonNum", "@exonNum")
+    ("Chr", "@chrom"),
+    ("Start", "@start"),
+    ("End", "@end"),
+    ("BAF", "@cell_frac{0.00}"),
+    ("Gene", "@gene"),
+    ("CN", "@cn")
 ]
 
 TOOLTIPS = [
-    #("Index", "$index"),
     ("Chr", "@chrom"),
-    ("Start - End", "@start - @end"),
+    ("Start", "@start"),
+    ("End", "@end"),
     ("Gene", "@gene"),
-    #("Start", "@start"),
-    #("End", "@end"),
-    ("Log2(FC)", "@logFC")
+    ("Log2(FC)", "@logFC"),
+    ("DP","@depth{0.00}"),
+    ("Probes","@probes"),
+    ("Weight", "@weight") 
 ]
 
 if (options.vcf_file and not df_vaf.empty):
     TOOLTIPS_VAF = [
         ("Chr", "@chrom"),
         ("Pos", "@start"),
-        ("Ref | Alt", "@Ref | @Alt"),
+        ("Ref/Alt", "@Ref/@Alt"),
         #("Alt", "@Alt"),
         ("DP", "@DP"),
         ("VAF", "@AF")
@@ -682,11 +700,12 @@ if (options.gene_file and config['plots']['logFC_ind_plot']['gene_markers']['vis
                left="prob_start",
                right="prob_end",
                color=config['plots']['logFC_ind_plot']['gene_markers']['color'],
+               alpha=config['plots']['logFC_ind_plot']['gene_markers']['alpha'],
                source=source_gene)
 
 logFC.circle("ind", "logFC",
              source=source,
-             size="weight",
+             size="weight_scaled",
              line_color=config['plots']['logFC_ind_plot']['point_line_color'],
              fill_color=factor_cmap("label", palette=[config['plots']['logFC_ind_plot']['point_on_target_color'],
                                                       config['plots']['logFC_ind_plot']['point_off_target_color']],
@@ -733,11 +752,12 @@ if (options.gene_file and config['plots']['logFC_genome_plot']['gene_markers']['
                       left="genome_cumsum_start",
                       right="genome_cumsum_end",
                       color=config['plots']['logFC_genome_plot']['gene_markers']['color'],
+                      alpha=config['plots']['logFC_ind_plot']['gene_markers']['alpha'],
                       source=source_gene)
 
 logFC_genome.circle("genome_cumsum", "logFC",
                     source=source,
-                    size="weight",
+                    size="weight_scaled",
                     line_color=config['plots']['logFC_genome_plot']['point_line_color'],
                     fill_color=factor_cmap("label",
                                            palette=[config['plots']['logFC_genome_plot']['point_on_target_color'],
@@ -789,21 +809,19 @@ if(options.seg_file):
             ((config['files']['segmentation_file']['column_names']['major_cn'] in seg.columns and
             config['files']['segmentation_file']['column_names']['minor_cn'] in seg.columns) or
             config['files']['segmentation_file']['column_names']['cell_frac'] in seg.columns)
-
-
+    
 if (options.seg_file and int_cn_flag):
     int_cn_genome = figure(plot_width=config['plots']['int_cn_plot']['width'],
-                      plot_height=config['plots']['int_cn_plot']['height'],
-                      tooltips=TOOLTIPS_INT_CN,
-                      tools=config['plots']['plot_tools'],
-                      output_backend=config['plots']['int_cn_plot']['output_backend'],
-                      active_scroll=config['plots']['int_cn_plot']['active_scroll'],
-                      active_tap="auto",
-                      x_range=logFC_genome.x_range,
-                      # y_range=DataRange1d(
-                      #     bounds=(min(seg[config['files']['segmentation_file']['column_names']['minor_cn']]) - 1,
-                      #             max(seg[config['files']['segmentation_file']['column_names']['major_cn']]) + 1)),
-                      title=config['plots']['int_cn_plot']['title'])
+                        plot_height=config['plots']['int_cn_plot']['height'],
+                        tools = [HoverTool(tooltips=TOOLTIPS_INT_CN, mode='mouse')] + config['plots']['plot_tools'],
+                        output_backend=config['plots']['int_cn_plot']['output_backend'],
+                        active_scroll=config['plots']['int_cn_plot']['active_scroll'],
+                        active_tap="auto",
+                        x_range=logFC_genome.x_range,
+                    #   y_range=DataRange1d(
+                    #       bounds=(min(seg[config['files']['segmentation_file']['column_names']['minor_cn']]) - 2,
+                    #               max(seg[config['files']['segmentation_file']['column_names']['cn']]) + 2)),
+                        title=config['plots']['int_cn_plot']['title'])
 
     if (config['files']['segmentation_file']['column_names']['major_cn'] in seg.columns and
       config['files']['segmentation_file']['column_names']['minor_cn'] in seg.columns):
@@ -829,8 +847,8 @@ if (options.seg_file and int_cn_flag):
                              source=source_seg)  # segmentation line
 
     if (config['files']['segmentation_file']['column_names']['cell_frac'] in seg.columns):
-        int_cn_genome.quad(top=max(seg[config['files']['segmentation_file']['column_names']['major_cn']]),
-               bottom=min(seg[config['files']['segmentation_file']['column_names']['minor_cn']]),
+        int_cn_genome.quad(top=max(seg[config['files']['segmentation_file']['column_names']['cn']])+1,
+               bottom=min(seg[config['files']['segmentation_file']['column_names']['minor_cn']])-1,
                left="genome_cumsum_start",
                right="genome_cumsum_end",
                color=config['plots']['int_cn_plot']['cell_frac_color'],
@@ -843,7 +861,7 @@ if (options.seg_file and int_cn_flag):
     int_cn_genome.xaxis.visible = config['plots']['int_cn_plot']['x_axis_label_visibility'] == "on"
     int_cn_genome.yaxis.visible = config['plots']['int_cn_plot']['y_axis_label_visibility'] == "on"
     int_cn_genome.xgrid.grid_line_color = None
-
+    # int_cn_genome.add_tools(HoverTool(tooltips=TOOLTIPS_INT_CN, mode='vline')) 
 
 #############
 if (options.annot_file):
@@ -1070,8 +1088,7 @@ if (options.gene_file):
         d2['end'].push(data_gene['end'][i])
         d2['gene'].push(data_gene['gene'][i])
         d2['logFC'].push(data_gene['logFC'][i])
-
-    }
+      }
     }
 
     var data = source_copy.data;
@@ -1084,7 +1101,10 @@ if (options.gene_file):
     d3['logFC']=[];
     d3['ind']=[];
     d3['label']=[];
+    d3['depth']=[];
     d3['weight']=[];
+    d3['probes']=[];
+    d3['weight_scaled']=[];
 
 
     for(i = 0; i < data['chrom'].length;i++){
@@ -1098,7 +1118,10 @@ if (options.gene_file):
         d3['genome_cumsum'].push(data['genome_cumsum'][i])
         d3['ind'].push(data['ind'][i])
         d3['label'].push(data['label'][i])
+        d3['depth'].push(data['depth'][i])
         d3['weight'].push(data['weight'][i])
+        d3['probes'].push(data['probes'][i])
+        d3['weight_scaled'].push(data['weight_scaled'][i])
 
     }else if(f == "Loss" | f == "Amplification" | f == "All Amplification and Loss" | f == "Gain" | f == "Deep Loss"){
         if(d2['gene'].includes(data['gene'][i])){
@@ -1110,7 +1133,10 @@ if (options.gene_file):
             d3['genome_cumsum'].push(data['genome_cumsum'][i])
             d3['ind'].push(data['ind'][i])
             d3['label'].push(data['label'][i])
+            d3['depth'].push(data['depth'][i])
             d3['weight'].push(data['weight'][i])
+            d3['probes'].push(data['probes'][i])
+            d3['weight_scaled'].push(data['weight_scaled'][i])
         }
     } else if (f.includes(data['gene'][i])){
         d3['chrom'].push(data['chrom'][i])
@@ -1121,9 +1147,11 @@ if (options.gene_file):
         d3['genome_cumsum'].push(data['genome_cumsum'][i])
         d3['ind'].push(data['ind'][i])
         d3['label'].push(data['label'][i])
+        d3['depth'].push(data['depth'][i])
         d3['weight'].push(data['weight'][i])
-
-    } 
+        d3['probes'].push(data['probes'][i])
+        d3['weight_scaled'].push(data['weight_scaled'][i])
+      } 
     }
     
     if (!d3['chrom'].length){
